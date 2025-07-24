@@ -1,0 +1,20 @@
+{
+    "exp_id": "K562-GATA2-BPNet",
+
+    "model_path": "GATA2.torch",
+    "backgrounds_bed": "negatives.K562.GATA2.ENCSR000BKM.ENCFF242YZU.bed",
+
+    "maxk": 6,
+    "n_backgrounds": 100,
+    "in_length": 2114,
+    "n_ctrl_tracks": 2,
+    "batch_size": 256,
+    "node_pval_nsamples": 1000,
+    "edge_pval_nsamples": 1000,
+    "n_core_kmers": 5,
+    
+    "random_seed": 0,
+ 
+    "motifs_meme": "JASPAR2024_CORE_vertebrates_non-redundant_pfms_meme.txt",
+    "genome_fasta": "hg38.fa"
+}
