@@ -442,16 +442,18 @@ def load_graph(in_path):
     return pickle.load(open(in_path, 'rb'))
         
 
-def build_graph(params, outdir="nucleomer-results"):
-    """
+def build_graph(params, marginalization_dir="marginalization", outdir="graph"):
+    """,
     Build a k-mer graph based on the provided parameters.
     
     Parameters
     ----------
     params: dict
         Dictionary containing parameters for building the graph.
+    marginalization_dir: str, optional
+        Directory where the marginalization results are stored. Defaults to "marginalization".
     outdir: str, optional
-        Output directory where the results will be saved. Defaults to "nucleomer-results".
+        Output directory where the results will be saved. Defaults to "graph".
     
     Returns
     -------
@@ -469,12 +471,6 @@ def build_graph(params, outdir="nucleomer-results"):
     edge_pval_nsamples = params.get('edge_pval_nsamples', 1000)
     node_pval_thresh = params.get('node_pval_thresh', .01)
     edge_pval_tresh = params.get('edge_pval_thresh', .01)
-
-    fasta_dir = f"{outdir}/fasta"
-    pkl_dir = f"{outdir}/pkl"
-    
-    npy_dir = f"{outdir}/npy"
-    os.makedirs(npy_dir, exist_ok=True)
     
     graph = nx.DiGraph() # empty directed graph
     kmer_indices = [] # list of dictionaries that maps each kmer sequence to a unique index
@@ -482,10 +478,10 @@ def build_graph(params, outdir="nucleomer-results"):
     rng = np.random.default_rng(seed=random_seed)
     for k in range(1, maxk + 1):
         # Load sequences
-        _, seqs = read_fasta(f"{fasta_dir}/kmers_k{k}.fa")
+        _, seqs = read_fasta(f"{marginalization_dir}/kmers_k{k}.fa")
 
         # Generate dinucleotide matrixes
-        dinuc_matrix_npy = f"{npy_dir}/dinuc_matrix_k{k}.npy"
+        dinuc_matrix_npy = f"{marginalization_dir}/dinuc_matrix_k{k}.npy"
         if os.path.exists(dinuc_matrix_npy):
             dinuc_matrix = np.load(dinuc_matrix_npy)
         else:
@@ -493,7 +489,7 @@ def build_graph(params, outdir="nucleomer-results"):
             np.save(dinuc_matrix_npy, dinuc_matrix)
 
         # Generate dinucleotide classes
-        dinuc_classes_pkl = f"{pkl_dir}/dinuc_classes_k{k}.pkl"
+        dinuc_classes_pkl = f"{outdir}/dinuc_classes_k{k}.pkl"
         if os.path.exists(dinuc_classes_pkl):
             with open(dinuc_classes_pkl, 'rb') as f:
                 dinuc_classes = pickle.load(f)
@@ -503,11 +499,11 @@ def build_graph(params, outdir="nucleomer-results"):
                 pickle.dump(dinuc_classes, f)
 
         # Load sequences and predictions
-        preds = np.load(f"{npy_dir}/pred.after.k{k}.npy") # shape(n_kmers, n_backgrounds)
+        preds = np.load(f"{marginalization_dir}/pred.after.k{k}.npy") # shape(n_kmers, n_backgrounds)
         all_preds.append(preds)
 
         # Calculate node p-values
-        pvals_npy = f"{npy_dir}/node_pvals_k{k}.npy"
+        pvals_npy = f"{marginalization_dir}/node_pvals_k{k}.npy"
         if not os.path.exists(pvals_npy):
             pvals, _ = calculate_node_pvals(preds, dinuc_classes, rng, n_samples=node_pval_nsamples)
             np.save(pvals_npy, pvals)
@@ -524,7 +520,6 @@ def build_graph(params, outdir="nucleomer-results"):
     calculate_edge_pvals(graph, kmer_indices, rng, all_preds, 
                          n_bgs=n_backgrounds, n_samples=edge_pval_nsamples)
     annotate_edge_counts(graph, edge_pval_thresh=edge_pval_tresh)
-    prune_edges_by_pval(graph, edge_pval_thresh=edge_pval_tresh, drop_isolates=True)
 
     return graph
 

@@ -13,7 +13,7 @@ from .utils import generate_kmers, extract_loci, read_fasta
 
 
 def marginalize_kmers(model, params, 
-                outdir="nucleomer-results", device="cpu"):
+                outdir="marginalization", device="cpu"):
     """
     Marginalize k-mers by substituting them into genomic backgrounds and predicting their effects.
     
@@ -24,7 +24,7 @@ def marginalize_kmers(model, params,
     params: dict
         Dictionary containing parameters for the marginalization process.
     outdir: str, optional
-        Directory to save the results. Defaults to "nucleomer-results".
+        Directory to save the results. Defaults to "marginalization".
     device: str, optional
         Device to run the model on (e.g., "cpu", "cuda", "mps"). Defaults to "cpu".
     """
@@ -35,17 +35,11 @@ def marginalize_kmers(model, params,
     in_length = params['in_length']
     n_ctrl_tracks = params['n_ctrl_tracks']
     batch_size = params['batch_size']
-
-    fasta_dir = f"{outdir}/fasta"
-    os.makedirs(fasta_dir, exist_ok=True)
-
-    npy_dir = f"{outdir}/npy"
-    os.makedirs(npy_dir, exist_ok=True)
     
     # Generate k-mers
     print(f"### Generate k-mer sequences")
     for k in range(1, maxk + 1):
-        outfile = f"{fasta_dir}/kmers_k{k}.fa"
+        outfile = f"{outdir}/kmers_k{k}.fa"
         if not os.path.exists(outfile):
             kmers = generate_kmers(k)
             print(f"Generated {len(kmers)} {k}-mers")
@@ -54,7 +48,7 @@ def marginalize_kmers(model, params,
                     f.write(f'>k{k}_kmer{i}\n{kmer}\n')
 
     # Load backgrounds
-    x_before_npy = f"{npy_dir}/x_before.npy"
+    x_before_npy = f"{outdir}/x_before.npy"
     if not os.path.exists(x_before_npy):
         x_before = extract_loci(params["genome_fasta"], params["backgrounds_bed"], 
                                 n_backgrounds, seq_len=in_length, validate=True).to(device)
@@ -68,7 +62,7 @@ def marginalize_kmers(model, params,
         ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length).to(device)
     
     # Get before predictions (backgrounds)
-    pred_before_npy = f"{npy_dir}/pred.before.npy"
+    pred_before_npy = f"{outdir}/pred.before.npy"
     if not os.path.exists(pred_before_npy):
         pred_before = predict(model, x_before, args=(ctrl_tensor,), batch_size=batch_size, 
                               device=device, verbose=False).squeeze()
@@ -77,9 +71,9 @@ def marginalize_kmers(model, params,
     # Get after predictions (kmers inserted into backgrounds)
     print(f"\n### Marginalize k-mers")
     for k in range(1, maxk + 1):
-        pred_after_npy = f"{npy_dir}/pred.after.k{k}.npy" # shape(4^k, n_backgrounds)
+        pred_after_npy = f"{outdir}/pred.after.k{k}.npy" # shape(4^k, n_backgrounds)
         if not os.path.exists(pred_after_npy):
-            fasta_path = f"{fasta_dir}/kmers_k{k}.fa"
+            fasta_path = f"{outdir}/kmers_k{k}.fa"
             kmer_names, kmer_seqs = read_fasta(fasta_path)
             n_kmers = len(kmer_names)
 
