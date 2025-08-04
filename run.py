@@ -1,5 +1,7 @@
 import sys
 import torch
+from torch import inference_mode
+from torch.amp import autocast
 import json
 import os
 
@@ -29,6 +31,8 @@ from nucleomer.kmer_graph import build_graph, save_graph, load_graph, find_cores
 outdir = f"nucleomer-results-{params['run_id']}"
 os.makedirs(outdir, exist_ok=True)
 
+verbose = params.get("verbose", False)
+
 marginalization_dir = f"{outdir}/marginalization"
 os.makedirs(marginalization_dir, exist_ok=True)
 
@@ -43,16 +47,23 @@ os.makedirs(tomtom_dir, exist_ok=True)
 
 device = check_accelerator()
 
+dtypes = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+dtype = params['data_type']
+dtype = dtypes.get(dtype, torch.float32)
+
 graph_pkl = f"{graph_dir}/kmer_graph.maxk{params['maxk']}.pkl"
 if os.path.exists(graph_pkl):
     graph = load_graph(graph_pkl)
 else:
     # Run marginalization ##################################################
-    model = load_bpnet(params["model_path"], device=device)
-    marginalize_kmers(model=model, params=params, outdir=marginalization_dir, device=device)
+    with inference_mode():
+        with autocast(device, dtype=dtype):
+            model = load_bpnet(params["model_path"], device=device)
+            marginalize_kmers(model=model, params=params, outdir=marginalization_dir, 
+                                device=device, dtype=dtype)
 
     # Build graph ##################################################
-    graph = build_graph(params=params, marginalization_dir=marginalization_dir, outdir=graph_dir)
+    graph = build_graph(params=params, marginalization_dir=marginalization_dir, outdir=graph_dir, verbose=verbose)
 
     nodes_csv = f"{graph_dir}/graph_nodes.maxk{params['maxk']}.csv"
     edges_csv = f"{graph_dir}/graph_edges.maxk{params['maxk']}.csv"

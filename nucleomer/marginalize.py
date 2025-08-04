@@ -13,7 +13,7 @@ from .utils import generate_kmers, extract_loci, read_fasta
 
 
 def marginalize_kmers(model, params, 
-                outdir="marginalization", device="cpu"):
+                outdir="marginalization", device="cpu", dtype=torch.float32):
     """
     Marginalize k-mers by substituting them into genomic backgrounds and predicting their effects.
     
@@ -27,6 +27,8 @@ def marginalize_kmers(model, params,
         Directory to save the results. Defaults to "marginalization".
     device: str, optional
         Device to run the model on (e.g., "cpu", "cuda", "mps"). Defaults to "cpu".
+    dtype: torch.dtype, optional
+        Data type for the model predictions. Defaults to torch.float32.
     """
 
     # Get parameters
@@ -65,7 +67,7 @@ def marginalize_kmers(model, params,
     pred_before_npy = f"{outdir}/pred.before.npy"
     if not os.path.exists(pred_before_npy):
         pred_before = predict(model, x_before, args=(ctrl_tensor,), batch_size=batch_size, 
-                              device=device, verbose=False).squeeze()
+                            device=device, verbose=False).squeeze()
         np.save(pred_before_npy, pred_before)
     
     # Get after predictions (kmers inserted into backgrounds)
@@ -77,7 +79,7 @@ def marginalize_kmers(model, params,
             kmer_names, kmer_seqs = read_fasta(fasta_path)
             n_kmers = len(kmer_names)
 
-            pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=torch.float32, device=device)
+            pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=dtype, device=device)
             
             for i, kmer_seq in tqdm(enumerate(kmer_seqs), total=n_kmers,
                                     desc=f"{k}-mers", unit=" kmer"):

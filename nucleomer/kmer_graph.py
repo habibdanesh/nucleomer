@@ -9,7 +9,8 @@ from functools import lru_cache
 from .utils import read_fasta
 
 
-def generate_dinuc_matrices(seqs, nuc_idx={'A': 0, 'C': 1, 'G': 2, 'T': 3}):
+def generate_dinuc_matrices(seqs, nuc_idx={'A': 0, 'C': 1, 'G': 2, 'T': 3},
+                            verbose=False):
     """
     Generate dinucleotide matrices for a list of sequences.
     
@@ -20,6 +21,8 @@ def generate_dinuc_matrices(seqs, nuc_idx={'A': 0, 'C': 1, 'G': 2, 'T': 3}):
     nuc_idx: dict, optional
         Dictionary mapping nucleotide characters to their indices in the matrix. 
         Defaults to {'A': 0, 'C': 1, 'G': 2, 'T': 3}.
+    verbose: bool, optional
+        If True, print progress information. Defaults to False.
     
     Returns
     -------
@@ -28,13 +31,13 @@ def generate_dinuc_matrices(seqs, nuc_idx={'A': 0, 'C': 1, 'G': 2, 'T': 3}):
     """
 
     dinuc_matrix = np.zeros((len(seqs), 4, 4), dtype=np.uint8)
-    for i, seq in enumerate(seqs):
+    for i, seq in enumerate(tqdm(seqs, desc="Generating dinucleotide matrices", unit="kmer") if verbose else seqs):
         for j in range(len(seq) - 1):
             dinuc_matrix[i, nuc_idx[seq[j]], nuc_idx[seq[j + 1]]] += 1
     return dinuc_matrix
 
 
-def generate_dinuc_classes(dinuc_matrix):
+def generate_dinuc_classes(dinuc_matrix, verbose=False):
     """
     Generate dinucleotide classes from a dinucleotide matrix.
     
@@ -42,6 +45,8 @@ def generate_dinuc_classes(dinuc_matrix):
     ----------
     dinuc_matrix: np.ndarray
         A 3D numpy array of shape (n_seqs, 4, 4) containing the dinucleotide matrices.
+    verbose: bool, optional
+        If True, print progress information. Defaults to False.
     
     Returns
     -------
@@ -50,22 +55,64 @@ def generate_dinuc_classes(dinuc_matrix):
     """
         
     dinuc_classes = [[0]] # Add the first kmer to the first class
-    for i in range(1, dinuc_matrix.shape[0]):
+    for i in tqdm(range(1, len(dinuc_matrix)), desc="Generating dinucleotide classes", unit="kmer") if verbose \
+            else range(1, len(dinuc_matrix)):
         i_mat = dinuc_matrix[i] # shape(4, 4)
         # Go through all the existing classes
         existing_class = False
         for c_idx, c_list in enumerate(dinuc_classes):
-            for j in c_list:
-                j_mat = dinuc_matrix[j] # shape(4, 4)
-                if np.array_equal(i_mat, j_mat):
-                    dinuc_classes[c_idx].append(i) # Add the kmer to the existing class
-                    existing_class = True
-                    break
-            if existing_class:
+            j_mat = dinuc_matrix[c_list[0]] # shape(4, 4), take a representative dinuc matrix from the class
+            if np.array_equal(i_mat, j_mat):
+                dinuc_classes[c_idx].append(i) # Add the kmer to the existing class
+                existing_class = True
                 break
         if not existing_class:
             # If no existing class was found, create a new one and add the kmer to it
             dinuc_classes.append([i])
+    if verbose:
+        print(f"# dinucleotide classes: {len(dinuc_classes)}")
+    return dinuc_classes
+
+
+def fast_generate_dinuc_classes(dinuc_matrix, verbose=False):
+    """
+    Generate dinucleotide classes from a dinucleotide matrix.
+    
+    Parameters
+    ----------
+    dinuc_matrix: np.ndarray
+        A 3D numpy array of shape (n_seqs, 4, 4) containing the dinucleotide matrices.
+    verbose: bool, optional
+        If True, print progress information. Defaults to False.
+    
+    Returns
+    -------
+    dinuc_classes: list[list[int]]
+        A list of lists, where each inner list contains indices of dinucleotides that belong to the same class.
+    """
+        
+    N = len(dinuc_matrix)
+
+    # Flatten each 4×4 matrix to a 16-long row (no copy)
+    flat = dinuc_matrix.reshape(N, 16)
+
+    # unique rows + inverse map
+    # keys: unique flattened matrices, shape (C, 16)
+    # inv: length-N array; inv[i] = class-id of row i
+    keys, inv = np.unique(flat, axis=0, return_inverse=True)
+
+    # Build dinuc_classes list
+    C = len(keys)
+    dinuc_classes = [[] for _ in range(C)]
+
+    iterator = range(N)
+    if verbose:
+        iterator = tqdm(iterator, desc="Generating dinucleotide classes", unit="kmer")
+
+    for i in iterator:
+        dinuc_classes[inv[i]].append(i)
+    if verbose:
+        print(f"# dinucleotide classes: {len(dinuc_classes)}")
     return dinuc_classes
 
 
@@ -136,7 +183,7 @@ def calculate_node_pvals(preds, dinuc_classes, rng, n_samples=1000):
         # Calculate the p-value
         counter = 0
         for _ in range(n_samples):
-            random_preds = subset_preds[np.arange(n_bgs), rng.integers(0, len_subset, size=n_bgs)] # NOTE the change here
+            random_preds = subset_preds[np.arange(n_bgs), rng.integers(0, len_subset, size=n_bgs)]
             if random_preds.mean() >= kmer_i_mean:
                 counter += 1
         pvals[i] = counter / n_samples
@@ -442,7 +489,7 @@ def load_graph(in_path):
     return pickle.load(open(in_path, 'rb'))
         
 
-def build_graph(params, marginalization_dir="marginalization", outdir="graph"):
+def build_graph(params, marginalization_dir="marginalization", outdir="graph", verbose=False):
     """,
     Build a k-mer graph based on the provided parameters.
     
@@ -454,6 +501,8 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph"):
         Directory where the marginalization results are stored. Defaults to "marginalization".
     outdir: str, optional
         Output directory where the results will be saved. Defaults to "graph".
+    verbose: bool, optional
+        If True, print additional information during the graph building process. Defaults to False.
     
     Returns
     -------
@@ -480,12 +529,12 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph"):
         # Load sequences
         _, seqs = read_fasta(f"{marginalization_dir}/kmers_k{k}.fa")
 
-        # Generate dinucleotide matrixes
-        dinuc_matrix_npy = f"{marginalization_dir}/dinuc_matrix_k{k}.npy"
+        # Generate dinucleotide matrices
+        dinuc_matrix_npy = f"{outdir}/dinuc_matrix_k{k}.npy"
         if os.path.exists(dinuc_matrix_npy):
             dinuc_matrix = np.load(dinuc_matrix_npy)
         else:
-            dinuc_matrix = generate_dinuc_matrices(seqs)
+            dinuc_matrix = generate_dinuc_matrices(seqs, verbose=verbose)
             np.save(dinuc_matrix_npy, dinuc_matrix)
 
         # Generate dinucleotide classes
@@ -494,7 +543,7 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph"):
             with open(dinuc_classes_pkl, 'rb') as f:
                 dinuc_classes = pickle.load(f)
         else:
-            dinuc_classes = generate_dinuc_classes(dinuc_matrix)
+            dinuc_classes = fast_generate_dinuc_classes(dinuc_matrix, verbose=verbose)
             with open(dinuc_classes_pkl, 'wb') as f:
                 pickle.dump(dinuc_classes, f)
 
@@ -503,10 +552,12 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph"):
         all_preds.append(preds)
 
         # Calculate node p-values
-        pvals_npy = f"{marginalization_dir}/node_pvals_k{k}.npy"
+        pvals_npy = f"{outdir}/node_pvals_k{k}.npy"
         if not os.path.exists(pvals_npy):
             pvals, _ = calculate_node_pvals(preds, dinuc_classes, rng, n_samples=node_pval_nsamples)
             np.save(pvals_npy, pvals)
+            if verbose:
+                print('')
         else:
             pvals = np.load(pvals_npy)
 
