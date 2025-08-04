@@ -21,12 +21,16 @@ def marginalize_kmers(model, params,
     ----------
     model: torch.nn.Module
         A trained model to use for predictions.
+
     params: dict
         Dictionary containing parameters for the marginalization process.
+
     outdir: str, optional
         Directory to save the results. Defaults to "marginalization".
+
     device: str, optional
         Device to run the model on (e.g., "cpu", "cuda", "mps"). Defaults to "cpu".
+
     dtype: torch.dtype, optional
         Data type for the model predictions. Defaults to torch.float32.
     """
@@ -52,7 +56,7 @@ def marginalize_kmers(model, params,
     x_before_npy = f"{outdir}/x_before.npy"
     if not os.path.exists(x_before_npy):
         x_before = extract_loci(params["genome_fasta"], params["backgrounds_bed"], 
-                                n_backgrounds, seq_len=in_length, validate=True)
+                                n_backgrounds, seq_len=in_length, validate=True, dtype=dtype)
         np.save(x_before_npy, x_before)
     else:
         x_before = torch.from_numpy(np.load(x_before_npy))
@@ -62,7 +66,7 @@ def marginalize_kmers(model, params,
     # Control # TODO: make sure this works for other models than BPNet
     ctrl_tensor = None
     if n_ctrl_tracks > 0:
-        ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length).to(device)
+        ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
     
     # Get before predictions (backgrounds)
     pred_before_npy = f"{outdir}/pred.before.npy"
@@ -72,7 +76,7 @@ def marginalize_kmers(model, params,
         np.save(pred_before_npy, pred_before)
     
     # Get after predictions (kmers inserted into backgrounds)
-    print(f"### Marginalize k-mers")
+    print(f"\n### Marginalize k-mers")
     for k in range(1, maxk + 1):
         pred_after_npy = f"{outdir}/pred.after.k{k}.npy" # shape(4^k, n_backgrounds)
         if not os.path.exists(pred_after_npy):
@@ -84,7 +88,7 @@ def marginalize_kmers(model, params,
 
             if k <= 5:
                 if n_ctrl_tracks > 0:
-                    ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length).to(device)
+                    ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
                 for i, kmer_seq in tqdm(enumerate(kmer_seqs), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
                     kmer_ohe = one_hot_encode(kmer_seq).unsqueeze(0).to(device)
                     x_after = substitute(x_before, kmer_ohe)
@@ -93,7 +97,7 @@ def marginalize_kmers(model, params,
             else:
                 # Batched version
                 if n_ctrl_tracks > 0:
-                    ctrl_tensor = torch.zeros(batch_size * n_backgrounds, n_ctrl_tracks, in_length).to(device)
+                    ctrl_tensor = torch.zeros(batch_size * n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
                 n_batches = n_kmers // batch_size
                 for i in tqdm(range(0, n_kmers, batch_size), 
                                total=n_batches, desc=f"{k}-mers", unit=f"batch({batch_size} kmers)"):

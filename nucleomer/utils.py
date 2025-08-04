@@ -53,7 +53,8 @@ def generate_kmers(l, alphabet=['A', 'C', 'G', 'T']):
     return [''.join(motif) for motif in itertools.product(alphabet, repeat=l)]
 
 
-def extract_loci(genome_fasta, loci_bed, n_loci, seq_len=2114, validate=True):
+def extract_loci(genome_fasta, loci_bed, n_loci, seq_len=2114, 
+                validate=True, dtype=torch.float32):
     """
     Extract genomic sequences from a FASTA file based on loci specified in a BED file.
     
@@ -73,6 +74,9 @@ def extract_loci(genome_fasta, loci_bed, n_loci, seq_len=2114, validate=True):
     
     validate: bool, optional
         If True, validate that the sequences contain only A, C, G, T characters. Default is True.
+
+    dtype: torch.dtype, optional
+        Data type for the output tensor. Default is torch.float32.
     
     Returns
     -------
@@ -84,7 +88,7 @@ def extract_loci(genome_fasta, loci_bed, n_loci, seq_len=2114, validate=True):
     loci_df = pd.read_csv(loci_bed, sep="\t", header=None, usecols=[0, 1, 2], names=["chrom", "start", "end"])
     
     counter, indices = 0, []
-    x = torch.full((n_loci, 4, seq_len), np.nan, dtype=torch.float32)
+    x = torch.full((n_loci, 4, seq_len), np.nan, dtype=dtype)
     while counter < n_loci:
         idx = np.random.randint(0, loci_df.shape[0])
         while idx in indices:
@@ -97,7 +101,7 @@ def extract_loci(genome_fasta, loci_bed, n_loci, seq_len=2114, validate=True):
             # Make sure that the only characters are A, C, G, T
             if set(seq) - set("ACGT"):
                 continue
-        x[counter] = one_hot_encode(seq).float()
+        x[counter] = one_hot_encode(seq).to(dtype)
         counter += 1
 
     assert torch.isnan(x).sum() == 0
