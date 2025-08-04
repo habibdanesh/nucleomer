@@ -387,6 +387,63 @@ def calculate_edge_pvals(g, indices, rng, preds, n_bgs=100, n_samples=1000):
         data["pval"] = pval
 
 
+def calculate_edge_pvals_fast(g, indices, rng, preds, n_bgs=100, n_samples=1000):
+    """
+    Calculate p-values for edges in the graph based on the predictions.
+    
+    Parameters
+    ----------
+    g: nx.DiGraph
+        The directed graph containing edges for which p-values will be calculated.
+    indices: list[dict]
+        List of dictionaries that maps each k-mer sequence to a unique index.
+    rng: np.random.Generator
+        Random number generator for reproducibility.
+    preds: list[list[list[float]]] # shape(maxk, n_kmers of length k, n_bgs)
+        List of predictions for each k-mer length.
+    n_bgs: int, optional
+        Number of backgrounds to use for calculating p-values. Defaults to 100.
+    n_samples: int, optional
+        Number of samples to use for calculating p-values. Defaults to 1000.
+    """
+
+    B = preds[0].shape[1] # Number of backgrounds
+
+    # Helper to get prediction vector for a k-mer
+    def pred_vec(seq):
+        k = len(seq) - 1
+        ix = indices[k][seq]
+        return preds[k][ix] # (B,)
+
+    for s in tqdm(g.nodes, desc="Calculating edge p-values", unit=" source"):
+        children = list(g.successors(s))
+        if len(children) == 0:
+            continue
+        elif len(children) < 2:
+            t = children[0]
+            if (g.edges[s, t]["dPred"] > 0) or (g.edges[s, t]["dPval"] < 0): # If t is better than s
+                g.edges[s, t]["pval"] = .0
+            else:
+                g.edges[s, t]["pval"] = 1.0
+            continue
+
+        v_s = pred_vec(s) # (B,)
+        V_all = np.stack([pred_vec(c) - v_s for c in children], axis=1) # (B, M)
+
+        # Bootstrap null distribution (vectorized)
+        rand_cols = rng.integers(0, V_all.shape[1], size=(n_samples, B), dtype=np.int32)
+        samples = V_all[np.arange(B)[None, :], rand_cols] # (S , B)
+        sample_means = samples.mean(axis=1) # (S,)
+        sample_means.sort() # for fast CDF
+
+        for t in children:
+            v_t = pred_vec(t)
+            obs = (v_t - v_s).mean() # correct observed statistic
+            num_ge = sample_means.size - sample_means.searchsorted(obs, side="left")
+            pval = float(num_ge / n_samples)
+            g.edges[s, t]["pval"] = pval
+
+
 def annotate_edge_counts(g, edge_pval_thresh=.01):
     """
     Annotate the graph with counts of incoming and outgoing edges for each node.
@@ -611,7 +668,7 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph", v
 
     build_candidate_edges(graph, maxk, node_pval_thresh)
     prune_isolated_nodes(graph)
-    calculate_edge_pvals(graph, kmer_indices, rng, all_preds, 
+    calculate_edge_pvals_fast(graph, kmer_indices, rng, all_preds, 
                          n_bgs=n_backgrounds, n_samples=edge_pval_nsamples)
     annotate_edge_counts(graph, edge_pval_thresh=edge_pval_tresh)
 
