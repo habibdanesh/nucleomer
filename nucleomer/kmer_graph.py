@@ -31,7 +31,7 @@ def generate_dinuc_matrices(seqs, nuc_idx={'A': 0, 'C': 1, 'G': 2, 'T': 3},
     """
 
     dinuc_matrix = np.zeros((len(seqs), 4, 4), dtype=np.uint8)
-    for i, seq in enumerate(tqdm(seqs, desc="Generating dinucleotide matrices", unit="kmer") if verbose else seqs):
+    for i, seq in enumerate(tqdm(seqs, desc="Generating dinucleotide matrices", unit=" kmer") if verbose else seqs):
         for j in range(len(seq) - 1):
             dinuc_matrix[i, nuc_idx[seq[j]], nuc_idx[seq[j + 1]]] += 1
     return dinuc_matrix
@@ -55,7 +55,7 @@ def generate_dinuc_classes(dinuc_matrix, verbose=False):
     """
         
     dinuc_classes = [[0]] # Add the first kmer to the first class
-    for i in tqdm(range(1, len(dinuc_matrix)), desc="Generating dinucleotide classes", unit="kmer") if verbose \
+    for i in tqdm(range(1, len(dinuc_matrix)), desc="Generating dinucleotide classes", unit=" kmer") if verbose \
             else range(1, len(dinuc_matrix)):
         i_mat = dinuc_matrix[i] # shape(4, 4)
         # Go through all the existing classes
@@ -74,7 +74,7 @@ def generate_dinuc_classes(dinuc_matrix, verbose=False):
     return dinuc_classes
 
 
-def fast_generate_dinuc_classes(dinuc_matrix, verbose=False):
+def generate_dinuc_classes_fast(dinuc_matrix, verbose=False):
     """
     Generate dinucleotide classes from a dinucleotide matrix.
     
@@ -107,7 +107,7 @@ def fast_generate_dinuc_classes(dinuc_matrix, verbose=False):
 
     iterator = range(N)
     if verbose:
-        iterator = tqdm(iterator, desc="Generating dinucleotide classes", unit="kmer")
+        iterator = tqdm(iterator, desc="Generating dinucleotide classes", unit=" kmer")
 
     for i in iterator:
         dinuc_classes[inv[i]].append(i)
@@ -157,15 +157,12 @@ def calculate_node_pvals(preds, dinuc_classes, rng, n_samples=1000):
     -------
     pvals: np.ndarray
         A 1D numpy array of shape (n_kmers,) containing the p-values for each k-mer.
-    single_dinucs: list[bool]
-        A list of booleans indicating whether each k-mer is a single dinucleotide (True) or not (False).
     """
 
     pvals = np.full(len(preds), np.nan, dtype=np.float32) # shape(4^k,)
     n_kmers, n_bgs = preds.shape
-    single_dinucs = []
     
-    for i in tqdm(range(n_kmers), unit="kmer"):
+    for i in tqdm(range(n_kmers), unit=" kmer"):
         kmer_i_mean = preds[i].mean()
         
         # Get the subset of preds with kmers in the same dinucleotide class
@@ -175,20 +172,66 @@ def calculate_node_pvals(preds, dinuc_classes, rng, n_samples=1000):
         if len_subset == 1:
             subset_indices = range(n_kmers) # If there is only one kmer in the class, use all kmers
             len_subset = len(subset_indices)
-            single_dinucs.append(True)
-        else:
-            single_dinucs.append(False)
         subset_preds = preds[subset_indices].T # shape(n_bgs, len_subset)
         
         # Calculate the p-value
         counter = 0
         for _ in range(n_samples):
-            random_preds = subset_preds[np.arange(n_bgs), rng.integers(0, len_subset, size=n_bgs)]
+            random_preds = subset_preds[np.arange(n_bgs), rng.integers(0, len_subset, size=n_bgs)] # shape(n_bgs,)
             if random_preds.mean() >= kmer_i_mean:
                 counter += 1
         pvals[i] = counter / n_samples
     
-    return pvals, single_dinucs
+    return pvals
+
+
+def calculate_node_pvals_fast(preds, dinuc_classes, rng, n_samples=1000):
+    """
+    Calculate p-values for each node based on the predictions and dinucleotide classes.
+    
+    Parameters
+    ----------
+    preds: np.ndarray
+        A 2D numpy array of shape (n_kmers, n_backgrounds) containing the predictions for each k-mer.
+    dinuc_classes: list[list[int]]
+        A list of lists, where each inner list contains indices of dinucleotides that belong to the same class.
+    rng: np.random.Generator
+        A random number generator for reproducibility.
+    n_samples: int, optional
+        Number of samples to use for calculating p-values. Defaults to 1000.
+    
+    Returns
+    -------
+    pvals: np.ndarray
+        A 1D numpy array of shape (n_kmers,) containing the p-values for each k-mer.
+    """
+
+    N, B = preds.shape
+    kmer_means = preds.mean(axis=1) # (N,)
+    pvals = np.empty(N, dtype=np.float32)
+
+    # Pre-compute once if we ever need the “all k-mers” pool
+    global_pool = preds.T # (B, N)
+
+    for class_idx, idx_list in tqdm(enumerate(dinuc_classes), total=len(dinuc_classes), unit=" class"):
+        pool = preds[idx_list].T # (B, |class|)
+        if pool.shape[1] == 1: # fallback: global pool
+            pool = global_pool
+
+        # Bootstrap (vectorized): choose indices for all samples at once, shape (n_samples, B)
+        rand_cols = rng.integers(0, pool.shape[1], size=(n_samples, B), dtype=np.int32)
+        random_preds = pool[np.arange(B)[None, :], rand_cols] # gather -> (n_samples, B)
+        sample_means = random_preds.mean(axis=1) # (n_samples,)
+
+        sample_means.sort() # Sort once so later comparisons are vectorized
+
+        # Compute p-values for every k-mer in this class
+        for i in idx_list:
+            # Number of sample means ≥ observed mean
+            num_ge = sample_means.size - sample_means.searchsorted(kmer_means[i], side="left")
+            pvals[i] = num_ge / n_samples
+
+    return pvals
 
 
 def build_candidate_nodes(g, seqs, preds, pvals):
@@ -246,7 +289,7 @@ def build_candidate_edges(g, maxk, node_pval_thresh=.01):
 
     nucs = "ACGT"
     print('')
-    for seq in tqdm(g.nodes, desc="Building candidate edges", unit="kmer"):
+    for seq in tqdm(g.nodes, desc="Building candidate edges", unit=" kmer"):
         L = len(seq)
         # Insertions
         if L < maxk:
@@ -319,7 +362,7 @@ def calculate_edge_pvals(g, indices, rng, preds, n_bgs=100, n_samples=1000):
         Number of samples to use for calculating p-values. Defaults to 1000.
     """
 
-    for s, t, data in tqdm(g.edges(data=True), desc="Calculating edge p-values", unit="edge"):
+    for s, t, data in tqdm(g.edges(data=True), desc="Calculating edge p-values", unit=" edge"):
         s_1st_idx = len(s)-1
         s_2nd_idx = indices[s_1st_idx][s]
         edge_pred_s = preds[s_1st_idx][s_2nd_idx] # shape(n_bgs,)
@@ -543,7 +586,7 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph", v
             with open(dinuc_classes_pkl, 'rb') as f:
                 dinuc_classes = pickle.load(f)
         else:
-            dinuc_classes = fast_generate_dinuc_classes(dinuc_matrix, verbose=verbose)
+            dinuc_classes = generate_dinuc_classes_fast(dinuc_matrix, verbose=verbose)
             with open(dinuc_classes_pkl, 'wb') as f:
                 pickle.dump(dinuc_classes, f)
 
@@ -554,7 +597,7 @@ def build_graph(params, marginalization_dir="marginalization", outdir="graph", v
         # Calculate node p-values
         pvals_npy = f"{outdir}/node_pvals_k{k}.npy"
         if not os.path.exists(pvals_npy):
-            pvals, _ = calculate_node_pvals(preds, dinuc_classes, rng, n_samples=node_pval_nsamples)
+            pvals = calculate_node_pvals_fast(preds, dinuc_classes, rng, n_samples=node_pval_nsamples)
             np.save(pvals_npy, pvals)
             if verbose:
                 print('')
