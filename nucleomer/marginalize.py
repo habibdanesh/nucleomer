@@ -41,6 +41,7 @@ def marginalize_kmers(model, params,
     in_length = params['in_length']
     n_ctrl_tracks = params['n_ctrl_tracks']
     batch_size = params['batch_size']
+    model_type = params['model_type']
     
     # Generate k-mers
     for k in range(1, maxk + 1):
@@ -71,8 +72,12 @@ def marginalize_kmers(model, params,
     # Get before predictions (backgrounds)
     pred_before_npy = f"{outdir}/pred.before.npy"
     if not os.path.exists(pred_before_npy):
-        pred_before = predict(model, x_before, args=(ctrl_tensor,), batch_size=batch_size, 
-                            device=device, verbose=False).squeeze()
+        if model_type == "bpnet-lite":
+            pred_before = predict(model, x_before, args=(ctrl_tensor,), batch_size=batch_size, 
+                                device=device, verbose=False).squeeze()
+        elif model_type == "ProCapNet":
+            pred_before = predict(model, x_before, batch_size=batch_size, 
+                                device=device, verbose=False).squeeze()
         np.save(pred_before_npy, pred_before)
     
     # Get after predictions (kmers inserted into backgrounds)
@@ -92,7 +97,11 @@ def marginalize_kmers(model, params,
                 for i, kmer_seq in tqdm(enumerate(kmer_seqs), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
                     kmer_ohe = one_hot_encode(kmer_seq).unsqueeze(0).to(device)
                     x_after = substitute(x_before, kmer_ohe)
-                    pred_after[i] = predict(model, x_after, args=(ctrl_tensor,), batch_size=batch_size, 
+                    if model_type == "bpnet-lite":
+                        pred_after[i] = predict(model, x_after, args=(ctrl_tensor,), batch_size=batch_size, 
+                                            device=device, verbose=False).squeeze()
+                    elif model_type == "ProCapNet":
+                        pred_after[i] = predict(model, x_after, batch_size=batch_size, 
                                             device=device, verbose=False).squeeze()
             else:
                 # Batched version
@@ -105,8 +114,13 @@ def marginalize_kmers(model, params,
                     x_after_batch = torch.stack([substitute(x_before, one_hot_encode(kmer_seq).unsqueeze(0).to(device))
                                                   for kmer_seq in kmer_seqs_batch]).to(device) # (batch_size, n_backgrounds, 4, in_length)
                     x_after_batch = x_after_batch.view(-1, 4, in_length) # (batch_size * n_backgrounds, 4, in_length)
-                    pred_after_batch = predict(model, x_after_batch, args=(ctrl_tensor,), batch_size=batch_size, 
+                    if model_type == "bpnet-lite":
+                        pred_after_batch = predict(model, x_after_batch, args=(ctrl_tensor,), batch_size=batch_size, 
                                                 device=device, verbose=False).squeeze() # (batch_size * n_backgrounds)
+                    elif model_type == "ProCapNet":
+                        pred_after_batch = predict(model, x_after_batch, batch_size=batch_size, 
+                                                device=device, verbose=False).squeeze()
+                    
                     pred_after_batch = pred_after_batch.view(batch_size, n_backgrounds) # (batch_size, n_backgrounds)
                     pred_after[i:i+batch_size] = pred_after_batch
 

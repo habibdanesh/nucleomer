@@ -23,7 +23,7 @@ with open(params_json, 'r') as f:
     params = json.load(f)
 
 #
-from nucleomer.models_io import load_bpnet
+from nucleomer.models_io import load_bpnet, load_procapnet
 from nucleomer.utils import check_accelerator
 from nucleomer.marginalize import marginalize_kmers
 from nucleomer.kmer_graph import build_graph, save_graph, load_graph, find_cores
@@ -58,7 +58,13 @@ else:
     # Run marginalization ##################################################
     with inference_mode():
         with autocast(device, dtype=dtype):
-            model = load_bpnet(params["model_path"], device=device)
+            if params["model_type"] == "bpnet-lite":
+                model = load_bpnet(params["model_path"], device=device)
+            elif params["model_type"] == "ProCapNet":
+                model = load_procapnet(params["model_path"], device=device)
+            else:
+                raise ValueError(f"Unknown model type: {params['model_type']}")
+            
             marginalize_kmers(model=model, params=params, outdir=marginalization_dir, 
                                 device=device, dtype=dtype)
 
@@ -72,7 +78,7 @@ print(f"\nGraph has {graph.number_of_nodes()} nodes and {graph.number_of_edges()
 
 # Find core k-mers ##################################################
 n_cores = params.get("n_core_kmers", 5)
-all_cores, top_n_cores = find_cores(graph, top_n=n_cores, drop_frac=.4)
+all_cores, top_n_cores = find_cores(graph, top_n=n_cores, drop_frac=.2)
 
 cores_json = f"{cores_dir}/all_cores.maxk{params['maxk']}.json"
 with open(cores_json, 'w') as f:
