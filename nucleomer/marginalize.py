@@ -5,14 +5,10 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from tangermeme.predict import predict
-from tangermeme.ersatz import substitute
-from tangermeme.utils import one_hot_encode
-
 from .utils import generate_kmers, extract_loci, read_fasta, ohe
 
 
-def _build_inserted_batch(x_before, kmers_ohe, insert_pos):
+def _build_substituted_batch(x_before, kmers_ohe, insert_pos):
     """
     Create [K*B, 4, L] by repeating backgrounds K times and writing the k-mers
     into the same slice [insert_pos:insert_pos+k] for every background.
@@ -98,23 +94,17 @@ def marginalize_kmers(model, params,
         np.save(x_before_npy, x_before)
     else:
         x_before = torch.from_numpy(np.load(x_before_npy))
-
     x_before = x_before.to(device)
-    
-    # Control # TODO: make sure this works for other models than BPNet
-    ctrl_tensor = None
-    if n_ctrl_tracks > 0:
-        ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
     
     # Get before predictions (backgrounds)
     pred_before_npy = f"{outdir}/pred.before.npy"
     if not os.path.exists(pred_before_npy):
-        if model_type == "bpnet-lite":
-            pred_before = predict(model, x_before, args=(ctrl_tensor,), batch_size=batch_size, 
-                                device=device, verbose=False).squeeze()
-        elif model_type == "ProCapNet":
-            pred_before = predict(model, x_before, batch_size=batch_size, 
-                                device=device, verbose=False).squeeze()
+        print(f"Get background predictions..")
+        if n_ctrl_tracks > 0:
+            ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
+            pred_before = model(x_before, ctrl_tensor).squeeze()
+        else:
+            pred_before = model(x_before).squeeze()
         np.save(pred_before_npy, pred_before)
     
     # Get after predictions (kmers inserted into backgrounds)
@@ -134,7 +124,7 @@ def marginalize_kmers(model, params,
 
         if k <= 4:
             kmers_ohe = ohe(kmer_seqs, device=device, dtype=dtype)
-            x_after_batch = _build_inserted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
+            x_after_batch = _build_substituted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
 
             if n_ctrl_tracks > 0:
                 ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
@@ -157,7 +147,7 @@ def marginalize_kmers(model, params,
                             total=n_batches, desc=f"{k}-mers", unit=f" batch({batch_size} kmers)"):
                 
                 kmers_ohe = ohe(kmer_seqs[i:min(i+batch_size, n_kmers)], device=device, dtype=dtype)
-                x_after_batch = _build_inserted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
+                x_after_batch = _build_substituted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
                 
                 if n_ctrl_tracks > 0:
                     pred_after_batch = model(x_after_batch, ctrl_tensor).squeeze()
