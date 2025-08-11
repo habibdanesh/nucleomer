@@ -73,7 +73,7 @@ def marginalize_kmers(model, params,
     n_backgrounds = params['n_backgrounds']
     in_length = params['in_length']
     n_ctrl_tracks = params['n_ctrl_tracks']
-    batch_size = params['batch_size']
+    kmers_per_step = params['kmers_per_step']
     model_type = params['model_type']
     
     # Generate k-mers
@@ -120,41 +120,22 @@ def marginalize_kmers(model, params,
 
         ins_pos_k = (in_length - k) // 2
 
-        pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=dtype, device=device)
-
-        if k <= 4:
-            kmers_ohe = ohe(kmer_seqs, device=device, dtype=dtype)
-            x_after_batch = _build_substituted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
-
-            if n_ctrl_tracks > 0:
-                ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
-            for i in tqdm(range(n_kmers), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
-
-                start_idx = i * n_backgrounds
-                end_idx = start_idx + n_backgrounds
-                x_after = x_after_batch[start_idx:end_idx]  # (n_backgrounds, 4, in_length)
+        pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=dtype)
+        with tqdm(total=n_kmers, desc=f"{k}-mers", unit=" kmer") as pbar:
+            for start_kmer in range(0, n_kmers, kmers_per_step):
+                end_kmer = min(start_kmer + kmers_per_step, n_kmers)
+                n_kmers_batch = end_kmer - start_kmer
+                
+                kmers_ohe = ohe(kmer_seqs[start_kmer:end_kmer], device=device, dtype=dtype) # (kmers_per_step, 4, k)
+                x_after = _build_substituted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (kmers_per_step * n_backgrounds, 4, in_length)
                 
                 if n_ctrl_tracks > 0:
-                    pred_after[i] = model(x_after, ctrl_tensor).squeeze()
+                    ctrl_tensor = torch.zeros(n_kmers_batch * n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
+                    pred_after_batch = model(x_after, ctrl_tensor).squeeze()
                 else:
-                    pred_after[i] = model(x_after).squeeze()
-        else:
-            # Batched version
-            if n_ctrl_tracks > 0:
-                ctrl_tensor = torch.zeros(batch_size * n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
-            n_batches = n_kmers // batch_size
-            for i in tqdm(range(0, n_kmers, batch_size), 
-                            total=n_batches, desc=f"{k}-mers", unit=f" batch({batch_size} kmers)"):
+                    pred_after_batch = model(x_after).squeeze()
                 
-                kmers_ohe = ohe(kmer_seqs[i:min(i+batch_size, n_kmers)], device=device, dtype=dtype)
-                x_after_batch = _build_substituted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
-                
-                if n_ctrl_tracks > 0:
-                    pred_after_batch = model(x_after_batch, ctrl_tensor).squeeze()
-                else:
-                    pred_after_batch = model(x_after_batch).squeeze()
-                
-                pred_after_batch = pred_after_batch.view(batch_size, n_backgrounds) # (batch_size, n_backgrounds)
-                pred_after[i:min(i+batch_size, n_kmers)] = pred_after_batch
+                pred_after[start_kmer:end_kmer] = pred_after_batch.view(n_kmers_batch, n_backgrounds) # (n_kmers_batch, n_backgrounds)
+                pbar.update(n_kmers_batch)
 
-        np.save(pred_after_npy, pred_after.cpu())
+        np.save(pred_after_npy, pred_after)
