@@ -136,3 +136,39 @@ def read_fasta(fasta_path):
             else:
                 seqs[-1] += line
     return names, seqs
+
+
+def ohe(seqs, device="cpu", dtype=torch.float32):
+    """
+    One-hot encode a list of DNA sequences.
+
+    Parameters
+    ----------
+    seqs: list of str
+        List of DNA sequences to be one-hot encoded. All sequences must have the same length.
+
+    device: str, optional
+        Device to place the resulting tensor on (e.g., "cpu", "cuda", "mps"). Defaults to "cpu".
+
+    dtype: torch.dtype, optional
+        Data type for the resulting tensor. Defaults to torch.float32.
+
+    Returns
+    -------
+    torch.Tensor: A tensor of shape (N, 4, k) where N is the number of sequences,
+        4 corresponds to the nucleotides A, C, G, T, and k is the length of each sequence.
+    """
+
+    k = len(seqs[0])
+    assert all(len(s) == k for s in seqs), "All sequences in the batch must have same length."
+    
+    # Build index tensor [N, k] in CPU then push once
+    idx_cpu = torch.empty((len(seqs), k), dtype=torch.int64)
+    mapping = {"A": 0, "C": 1, "G": 2, "T": 3}
+    for i, s in enumerate(seqs):
+        idx_cpu[i] = torch.tensor([mapping[ch] for ch in s], dtype=torch.int64)
+    idx = idx_cpu.to(device)
+
+    out = torch.zeros((len(seqs), 4, k), device=device, dtype=dtype)
+    
+    return out.scatter_(1, idx.unsqueeze(1), 1)

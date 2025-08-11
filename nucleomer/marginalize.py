@@ -9,7 +9,44 @@ from tangermeme.predict import predict
 from tangermeme.ersatz import substitute
 from tangermeme.utils import one_hot_encode
 
-from .utils import generate_kmers, extract_loci, read_fasta
+from .utils import generate_kmers, extract_loci, read_fasta, ohe
+
+
+def _build_inserted_batch(x_before, kmers_ohe, insert_pos):
+    """
+    Create [K*B, 4, L] by repeating backgrounds K times and writing the k-mers
+    into the same slice [insert_pos:insert_pos+k] for every background.
+    
+    Parameters
+    ----------
+    x_before: torch.Tensor
+        Tensor of shape [B, 4, L] containing background sequences.
+
+    kmers_ohe: torch.Tensor
+        Tensor of shape [K, 4, k] containing one-hot encoded k-mers
+
+    insert_pos: int
+        Position to insert the k-mers into the backgrounds.
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor of shape [K*B, 4, L] containing the backgrounds with k-mers inserted.
+    """
+    B, C, L = x_before.shape
+    K, _, k = kmers_ohe.shape
+    assert C == 4 and kmers_ohe.shape[1] == 4
+    assert 0 <= insert_pos <= L - k
+
+    # Repeat backgrounds: [K, B, 4, L] → [K*B, 4, L]
+    x = x_before.unsqueeze(0).expand(K, B, C, L).contiguous().view(K * B, C, L)
+
+    # Tile k-mers for all backgrounds: [K,4,k] → [K*B,4,k]
+    patch = kmers_ohe.repeat_interleave(B, dim=0)
+
+    # In-place write of the patch slice for all K*B
+    x[:, :, insert_pos:insert_pos + k] = patch
+    return x
 
 
 def marginalize_kmers(model, params, 
@@ -91,37 +128,41 @@ def marginalize_kmers(model, params,
         kmer_names, kmer_seqs = read_fasta(fasta_path)
         n_kmers = len(kmer_names)
 
+        ins_pos_k = (in_length - k) // 2
+
         pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=dtype, device=device)
 
-        if k <= 5:
+        if k <= 4:
+            kmers_ohe = ohe(kmer_seqs, device=device, dtype=dtype)
+            x_after_batch = _build_inserted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
+
             if n_ctrl_tracks > 0:
                 ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
-            for i, kmer_seq in tqdm(enumerate(kmer_seqs), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
-                kmer_ohe = one_hot_encode(kmer_seq).unsqueeze(0).to(device)
-                x_after = substitute(x_before, kmer_ohe)
+            for i in tqdm(range(n_kmers), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
+
+                start_idx = i * n_backgrounds
+                end_idx = start_idx + n_backgrounds
+                x_after = x_after_batch[start_idx:end_idx]  # (n_backgrounds, 4, in_length)
+                
                 if n_ctrl_tracks > 0:
-                    pred_after[i] = predict(model, x_after, args=(ctrl_tensor,), batch_size=batch_size, 
-                                        device=device, verbose=False).squeeze()
+                    pred_after[i] = model(x_after, ctrl_tensor).squeeze()
                 else:
-                    pred_after[i] = predict(model, x_after, batch_size=batch_size, 
-                                        device=device, verbose=False).squeeze()
+                    pred_after[i] = model(x_after).squeeze()
         else:
             # Batched version
             if n_ctrl_tracks > 0:
                 ctrl_tensor = torch.zeros(batch_size * n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
             n_batches = n_kmers // batch_size
             for i in tqdm(range(0, n_kmers, batch_size), 
-                            total=n_batches, desc=f"{k}-mers", unit=f"batch({batch_size} kmers)"):
-                kmer_seqs_batch = kmer_seqs[i:min(i+batch_size, n_kmers)]
-                x_after_batch = torch.stack([substitute(x_before, one_hot_encode(kmer_seq).unsqueeze(0).to(device))
-                                                for kmer_seq in kmer_seqs_batch]).to(device) # (batch_size, n_backgrounds, 4, in_length)
-                x_after_batch = x_after_batch.view(-1, 4, in_length) # (batch_size * n_backgrounds, 4, in_length)
+                            total=n_batches, desc=f"{k}-mers", unit=f" batch({batch_size} kmers)"):
+                
+                kmers_ohe = ohe(kmer_seqs[i:min(i+batch_size, n_kmers)], device=device, dtype=dtype)
+                x_after_batch = _build_inserted_batch(x_before, kmers_ohe, ins_pos_k).to(device)  # (n_kmers * n_backgrounds, 4, in_length)
+                
                 if n_ctrl_tracks > 0:
-                    pred_after_batch = predict(model, x_after_batch, args=(ctrl_tensor,), batch_size=batch_size, 
-                                            device=device, verbose=False).squeeze() # (batch_size * n_backgrounds)
+                    pred_after_batch = model(x_after_batch, ctrl_tensor).squeeze()
                 else:
-                    pred_after_batch = predict(model, x_after_batch, batch_size=batch_size, 
-                                            device=device, verbose=False).squeeze()
+                    pred_after_batch = model(x_after_batch).squeeze()
                 
                 pred_after_batch = pred_after_batch.view(batch_size, n_backgrounds) # (batch_size, n_backgrounds)
                 pred_after[i:min(i+batch_size, n_kmers)] = pred_after_batch
