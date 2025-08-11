@@ -84,44 +84,46 @@ def marginalize_kmers(model, params,
     print(f"\n### Marginalize k-mers")
     for k in range(1, maxk + 1):
         pred_after_npy = f"{outdir}/pred.after.k{k}.npy" # shape(4^k, n_backgrounds)
-        if not os.path.exists(pred_after_npy):
-            fasta_path = f"{outdir}/kmers_k{k}.fa"
-            kmer_names, kmer_seqs = read_fasta(fasta_path)
-            n_kmers = len(kmer_names)
+        if os.path.exists(pred_after_npy):
+            continue
 
-            pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=dtype, device=device)
+        fasta_path = f"{outdir}/kmers_k{k}.fa"
+        kmer_names, kmer_seqs = read_fasta(fasta_path)
+        n_kmers = len(kmer_names)
 
-            if k <= 5:
+        pred_after = torch.full((n_kmers, n_backgrounds), float('nan'), dtype=dtype, device=device)
+
+        if k <= 5:
+            if n_ctrl_tracks > 0:
+                ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
+            for i, kmer_seq in tqdm(enumerate(kmer_seqs), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
+                kmer_ohe = one_hot_encode(kmer_seq).unsqueeze(0).to(device)
+                x_after = substitute(x_before, kmer_ohe)
                 if n_ctrl_tracks > 0:
-                    ctrl_tensor = torch.zeros(n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
-                for i, kmer_seq in tqdm(enumerate(kmer_seqs), total=n_kmers, desc=f"{k}-mers", unit=" kmer"):
-                    kmer_ohe = one_hot_encode(kmer_seq).unsqueeze(0).to(device)
-                    x_after = substitute(x_before, kmer_ohe)
-                    if model_type == "bpnet-lite":
-                        pred_after[i] = predict(model, x_after, args=(ctrl_tensor,), batch_size=batch_size, 
-                                            device=device, verbose=False).squeeze()
-                    elif model_type == "ProCapNet":
-                        pred_after[i] = predict(model, x_after, batch_size=batch_size, 
-                                            device=device, verbose=False).squeeze()
-            else:
-                # Batched version
+                    pred_after[i] = predict(model, x_after, args=(ctrl_tensor,), batch_size=batch_size, 
+                                        device=device, verbose=False).squeeze()
+                else:
+                    pred_after[i] = predict(model, x_after, batch_size=batch_size, 
+                                        device=device, verbose=False).squeeze()
+        else:
+            # Batched version
+            if n_ctrl_tracks > 0:
+                ctrl_tensor = torch.zeros(batch_size * n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
+            n_batches = n_kmers // batch_size
+            for i in tqdm(range(0, n_kmers, batch_size), 
+                            total=n_batches, desc=f"{k}-mers", unit=f"batch({batch_size} kmers)"):
+                kmer_seqs_batch = kmer_seqs[i:min(i+batch_size, n_kmers)]
+                x_after_batch = torch.stack([substitute(x_before, one_hot_encode(kmer_seq).unsqueeze(0).to(device))
+                                                for kmer_seq in kmer_seqs_batch]).to(device) # (batch_size, n_backgrounds, 4, in_length)
+                x_after_batch = x_after_batch.view(-1, 4, in_length) # (batch_size * n_backgrounds, 4, in_length)
                 if n_ctrl_tracks > 0:
-                    ctrl_tensor = torch.zeros(batch_size * n_backgrounds, n_ctrl_tracks, in_length, dtype=dtype).to(device)
-                n_batches = n_kmers // batch_size
-                for i in tqdm(range(0, n_kmers, batch_size), 
-                               total=n_batches, desc=f"{k}-mers", unit=f"batch({batch_size} kmers)"):
-                    kmer_seqs_batch = kmer_seqs[i:i+batch_size]
-                    x_after_batch = torch.stack([substitute(x_before, one_hot_encode(kmer_seq).unsqueeze(0).to(device))
-                                                  for kmer_seq in kmer_seqs_batch]).to(device) # (batch_size, n_backgrounds, 4, in_length)
-                    x_after_batch = x_after_batch.view(-1, 4, in_length) # (batch_size * n_backgrounds, 4, in_length)
-                    if model_type == "bpnet-lite":
-                        pred_after_batch = predict(model, x_after_batch, args=(ctrl_tensor,), batch_size=batch_size, 
-                                                device=device, verbose=False).squeeze() # (batch_size * n_backgrounds)
-                    elif model_type == "ProCapNet":
-                        pred_after_batch = predict(model, x_after_batch, batch_size=batch_size, 
-                                                device=device, verbose=False).squeeze()
-                    
-                    pred_after_batch = pred_after_batch.view(batch_size, n_backgrounds) # (batch_size, n_backgrounds)
-                    pred_after[i:i+batch_size] = pred_after_batch
+                    pred_after_batch = predict(model, x_after_batch, args=(ctrl_tensor,), batch_size=batch_size, 
+                                            device=device, verbose=False).squeeze() # (batch_size * n_backgrounds)
+                else:
+                    pred_after_batch = predict(model, x_after_batch, batch_size=batch_size, 
+                                            device=device, verbose=False).squeeze()
+                
+                pred_after_batch = pred_after_batch.view(batch_size, n_backgrounds) # (batch_size, n_backgrounds)
+                pred_after[i:min(i+batch_size, n_kmers)] = pred_after_batch
 
-            np.save(pred_after_npy, pred_after.cpu())
+        np.save(pred_after_npy, pred_after.cpu())
