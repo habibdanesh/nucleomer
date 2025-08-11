@@ -105,7 +105,7 @@ def marginalize_kmers(model, params,
             pred_before = model(x_before, ctrl_tensor).squeeze()
         else:
             pred_before = model(x_before).squeeze()
-        np.save(pred_before_npy, pred_before)
+        np.save(pred_before_npy, pred_before.cpu())
     
     # Get after predictions (kmers inserted into backgrounds)
     print(f"\n### Marginalize k-mers")
