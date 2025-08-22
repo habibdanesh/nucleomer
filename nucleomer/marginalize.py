@@ -90,11 +90,11 @@ def marginalize_kmers(model, params,
     x_before_npy = f"{outdir}/x_before.npy"
     if not os.path.exists(x_before_npy):
         x_before = extract_loci(params["genome_fasta"], params["backgrounds_bed"], 
-                                n_backgrounds, seq_len=in_length, validate=True, dtype=dtype)
+                                n_backgrounds, seq_len=in_length, validate=True)
         np.save(x_before_npy, x_before)
     else:
         x_before = torch.from_numpy(np.load(x_before_npy))
-    x_before = x_before.to(device)
+    x_before = x_before.to(device, dtype=dtype)  # (n_backgrounds, 4, in_length)
     
     # Get before predictions (backgrounds)
     pred_before_npy = f"{outdir}/pred.before.npy"
@@ -105,7 +105,8 @@ def marginalize_kmers(model, params,
             pred_before = model(x_before, ctrl_tensor).squeeze()
         else:
             pred_before = model(x_before).squeeze()
-        np.save(pred_before_npy, pred_before.cpu())
+        pred_before = pred_before.cpu().to(torch.float16)
+        np.save(pred_before_npy, pred_before)
     
     # Get after predictions (kmers inserted into backgrounds)
     print(f"\n### Marginalize k-mers")
@@ -138,4 +139,5 @@ def marginalize_kmers(model, params,
                 pred_after[start_kmer:end_kmer] = pred_after_batch.view(n_kmers_batch, n_backgrounds) # (n_kmers_batch, n_backgrounds)
                 pbar.update(n_kmers_batch)
 
+        pred_after = pred_after.cpu().to(torch.float16)
         np.save(pred_after_npy, pred_after)
