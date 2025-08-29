@@ -79,7 +79,7 @@ def load_bpnet(model_path, device='cpu', dtype=torch.float32):
     BPNetCountWrapper: The loaded BPNet model in a wrapper that returns a single count value for each input.
     """
     
-    obj = torch.load(model_path, weights_only=False)
+    obj = torch.load(model_path, map_location=device, weights_only=False)
     # Normalize to a plain state_dict and re-save
     state = obj if isinstance(obj, dict) and all(isinstance(v, torch.Tensor) for v in obj.values()) \
             else (obj.get("state_dict", obj.get("model", obj)).state_dict() if isinstance(obj, dict) else obj.state_dict())
