@@ -23,7 +23,7 @@ with open(params_json, 'r') as f:
     params = json.load(f)
 
 #
-from nucleomer.models_io import load_bpnet, load_procapnet
+from nucleomer.models_io import load_bpnet, load_cherimoya, load_procapnet
 from nucleomer.utils import check_accelerator
 from nucleomer.marginalize import marginalize_kmers
 from nucleomer.kmer_graph import build_graph, save_graph, load_graph, find_cores
@@ -60,6 +60,8 @@ else:
         with autocast(device, dtype=dtype):
             if params["model_type"] == "bpnet-lite":
                 model = load_bpnet(params["model_path"], device=device)
+            if params["model_type"] == "Cherimoya":
+                model = load_cherimoya(params["model_path"], device=device)
             elif params["model_type"] == "ProCapNet":
                 model = load_procapnet(params["model_path"], device=device)
             else:

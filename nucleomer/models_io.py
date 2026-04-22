@@ -76,7 +76,7 @@ def load_bpnet(model_path, device='cpu', dtype=torch.float32):
 
     Returns
     -------
-    BPNetCountWrapper: The loaded BPNet model in a wrapper that returns a single count value for each input.
+    BPNetCount: The loaded BPNet model in a wrapper that returns a single count value for each input.
     """
     
     obj = torch.load(model_path, map_location=device, weights_only=False)
@@ -95,6 +95,43 @@ def load_bpnet(model_path, device='cpu', dtype=torch.float32):
     os.remove(new_path)
 
     return model
+
+
+class CherimoyaCount(torch.nn.Module):
+    """
+    Adapted from https://github.com/jmschrei/bpnet-lite
+    """
+    def __init__(self, model):
+        super(CherimoyaCount, self).__init__()
+        self.model = model
+
+    @torch.compile(mode='max-autotune')
+    def forward(self, X, X_ctl=None, **kwargs):
+        return self.model(X, X_ctl, **kwargs)[1]
+
+
+def load_cherimoya(model_path, device='cpu', dtype=torch.float32):
+    """
+    Load a Cherimoya model from the specified path.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to the saved Cherimoya model.
+    
+    device : str, optional
+        Device to load the model onto ('cpu', 'cuda', etc.). Default is 'cpu'.
+
+    dtype : torch.dtype, optional
+        Data type for the model. Default is torch.float32.
+
+    Returns
+    -------
+    CherimoyaCount: The loaded Cherimoya model in a wrapper that returns a single count value for each input.
+    """
+    
+    # Load into a new model
+    return CherimoyaCount(torch.load(model_path, weights_only=False)).to(device, dtype=dtype)
 
 
 class ProCapNet(torch.nn.Module):
